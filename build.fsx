@@ -8,7 +8,6 @@ open System.Text
 open Fake
 open Fake.DotNetCli
 open Fake.DocFxHelper
-open Fake.DotNet.Testing.XUnit2
 
 
 // Information about the project for Nuget and Assembly info files
@@ -20,7 +19,7 @@ let tags = ["";]
 let configuration = "Release"
 
 // Read release notes and version
-let solutionFile = FindFirstMatchingFile "*.sln" __SOURCE_DIRECTORY__  // dynamically look up the solution
+let solutionFile = FindFirstMatchingFile "./src/*.sln" __SOURCE_DIRECTORY__  // dynamically look up the solution
 let buildNumber = environVarOrDefault "BUILD_NUMBER" "0"
 let preReleaseVersionSuffix = (if (not (buildNumber = "0")) then (buildNumber) else "") + "-beta"
 let versionSuffix = 
@@ -68,18 +67,13 @@ Target "RestorePackages" (fun _ ->
 )
 
 Target "BuildSolution" (fun _ ->
-    MSBuildWithDefaults "Build" ["./Zynga.Akka.Cluster.sln"]
+    MSBuildWithDefaults "Build" ["./src/Zynga.Akka.Cluster.sln"]
     |> Log "AppBuild-Output: "
 )
 
 
 Target "Build" (fun _ ->          
     let runSingleProject(project: string) =
-        let framework = 
-            match (project.Contains("Tests")) with
-            | true -> "netcoreapp1.1"
-            | _ -> "netstandard1.6"
-
         DotNetCli.Build
             (fun p -> 
                 { p with
@@ -114,16 +108,15 @@ module internal ResultHandling =
         >> Option.iter (failBuildWithMessage errorLevel)
 
 Target "RunTests" (fun _ -> 
-    let projects = 
-        match (isWindows) with 
-        | true -> !! "./src/**/*.Tests.csproj"
-        | _ -> !! "./src/**/*.Tests.csproj" // if you need to filter specs for Linux vs. Windows, do it here
+    let projects = !! "./**/*.Tests.csproj"
 
     let runSingleProject project =
-        let testDir = (Directory.GetParent project).FullName + "/bin/" + configuration + "/net452"
-        let resultsFiles = sprintf "%s_xunit.html" (fileNameWithoutExt project)
-        !! (testDir + @"\*Tests.dll") 
-            |> xUnit2 (fun p -> { p with HtmlOutputPath = Some (outputTests @@ resultsFiles) })
+        DotNetCli.RunCommand
+            (fun p -> 
+                { p with 
+                    WorkingDir = (Directory.GetParent project).FullName
+                    TimeOut = TimeSpan.FromMinutes 10. })
+                (sprintf "xunit -parallel none -teamcity -xml %s_xunit.xml" (outputTests @@ fileNameWithoutExt project)) 
 
     CreateDir outputTests
     projects |> Seq.iter (log)
@@ -265,6 +258,7 @@ Target "Nuget" DoNothing
 "Clean" ==> "RestorePackages" ==> "AssemblyInfo" ==> "Build" ==> "BuildRelease"
 
 // tests dependencies
+"Clean" ==> "RestorePackages" ==> "RunTests"
 
 // nuget dependencies
 "Clean" ==> "RestorePackages" ==> "Build" ==> "CreateNuget"
